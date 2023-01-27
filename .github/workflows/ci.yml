@@ -1,0 +1,104 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+    - develop
+    - feature/*
+
+  pull_request:
+    branches:
+    - develop
+
+jobs:
+  lint:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - uses: actions/setup-python@v4
+      with: { python-version: "3.8" }
+
+    - name: Install codespell
+      run: pip3 install codespell
+
+    - name: Lint
+      run: cmake -D FORMAT_COMMAND=clang-format-14 -P cmake/lint.cmake
+
+    - name: Spell check
+      if: always()
+      run: cmake -P cmake/spell.cmake
+
+  sanitize:
+    needs: [lint]
+
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Configure
+      env: { CXX: clang++-14 }
+      run: cmake --preset=ci-sanitize
+
+    - name: Build
+      run: cmake --build build/sanitize -j 2
+
+    - name: Test
+      working-directory: build/sanitize
+      env:
+        ASAN_OPTIONS: "strict_string_checks=1:\
+          detect_stack_use_after_return=1:\
+          check_initialization_order=1:\
+          strict_init_order=1:\
+          detect_leaks=1"
+        UBSAN_OPTIONS: print_stacktrace=1
+      run: ctest --output-on-failure -j 2
+
+  test:
+    needs: [lint]
+
+    strategy:
+      matrix:
+        os: [macos-12, ubuntu-22.04, windows-2022]
+
+        shared: ['YES', 'NO']
+
+        config: [Release, Debug]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install static analyzers
+      if: matrix.os == 'ubuntu-22.04'
+      run: >-
+        sudo apt-get install clang-tidy-14 cppcheck -y -q
+
+        sudo update-alternatives --install
+        /usr/bin/clang-tidy clang-tidy
+        /usr/bin/clang-tidy-14 140
+
+    - name: Setup MultiToolTask
+      if: matrix.os == 'windows-2022'
+      run: |
+        Add-Content "$env:GITHUB_ENV" 'UseMultiToolTask=true'
+        Add-Content "$env:GITHUB_ENV" 'EnforceProcessCountAcrossBuilds=true'
+
+    - name: Configure
+      shell: pwsh
+      run: cmake "--preset=ci-$("${{ matrix.os }}".split("-")[0])"
+        -DBUILD_SHARED_LIBS=${{ matrix.shared }}
+        -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+
+    - name: Build
+      run: cmake --build build --config ${{ matrix.config }} -j 2
+
+    - name: Install
+      run: cmake --install build --config ${{ matrix.config }} --prefix prefix
+
+    - name: Test
+      working-directory: build
+      run: ctest --output-on-failure -C ${{ matrix.config }} -j 2
