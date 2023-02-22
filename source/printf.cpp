@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 #include "printf/printf.hpp"
 
@@ -46,7 +47,9 @@ public:
 private:
   long long m_value;
 
-  static constexpr std::size_t max_digits_of_long_long = 21;
+  static constexpr std::size_t max_digits_of_long_long =
+      static_cast<std::size_t>(std::numeric_limits<long long>::digits10)
+      + (std::numeric_limits<long long>::is_signed ? 1 : 0) + 1;
   std::array<char, max_digits_of_long_long> m_buffer {};
 
   static_assert(CHAR_BIT == 8 && sizeof(long long) == 8);
